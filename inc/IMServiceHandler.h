@@ -92,6 +92,10 @@ private:
 	// Kicks off the send command process. Queries DB for outgoing commands and sends them.
 	MojErr IMSendCmd(MojServiceMessage* msg, const MojObject payload);
 
+	MojDbClient::Signal::Slot<IMServiceHandler> m_listAccountTemplatesSlot;
+	MojErr listAccountTemplatesResult(MojObject& result, MojErr err);
+	std::map<MojString, MojString> m_serviceNameCapabilityMapping;
+
 	// can we shut down?
 	bool OkToShutdown();
 

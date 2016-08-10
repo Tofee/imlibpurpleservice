@@ -45,7 +45,8 @@ const IMServiceHandler::Method IMServiceHandler::s_methods[] = {
 IMServiceHandler::IMServiceHandler(MojService* service)
 : m_service(service),
   m_dbClient(service),
-  m_connectionState(service)
+  m_connectionState(service),
+  m_listAccountTemplatesSlot(this, &IMServiceHandler::listAccountTemplatesResult)
 {
 	MojLogTrace(IMServiceApp::s_log);
 	m_loginState = NULL;
@@ -71,6 +72,31 @@ MojErr IMServiceHandler::init()
 	MojLogTrace(IMServiceApp::s_log);
 	MojLogInfo(IMServiceApp::s_log, IMVersionString);
 
+	// call luna://com.palm.service.accounts/listAccountTemplates '{}'
+	MojRefCountedPtr<MojServiceRequest> req;
+	MojErr err = m_service->createRequest(req);
+	if (err)
+	{
+		MojLogError(IMServiceApp::s_log, _T("IMLoginState::IMLoginState: create request failed"));
+	}
+	else
+	{
+		MojObject params;
+		err = req->send(m_listAccountTemplatesSlot, "com.palm.service.accounts","listAccountTemplates", params, MojServiceRequest::Unlimited);
+		if (err)
+		{
+			MojLogError(IMServiceApp::s_log, _T("DisplayControllerSubscription send request failed"));
+		}
+	}
+
+	return MojErrNone;
+}
+
+MojErr IMServiceHandler::listAccountTemplatesResult(MojObject& payload, MojErr resultErr)
+{
+	MojLogTrace(IMServiceApp::s_log);
+
+	// Now finish the initialization (even if there was an error for listAccountTemplatesResult)
 	MojErr err = addMethods(s_methods);
 	MojErrCheck(err);
 
@@ -81,9 +107,74 @@ MojErr IMServiceHandler::init()
 	m_displayController = new DisplayController(m_service);
 	m_displayController->createSubscription();
 
+	if (resultErr != MojErrNone)
+	{
+		MojString error;
+		MojErrToString(resultErr, error);
+		MojLogError(IMServiceApp::s_log, _T("listAccountTemplatesResult failed. error %d - %s"), resultErr, error.data());
+	}
+	else
+	{
+		IMServiceHandler::logMojObjectJsonString(_T("listAccountTemplatesResult success: %s"), payload);
+		/** result is in the form
+		 * {
+		 *   results: [
+		 *     {
+		 *       capabilityProviders: [
+		 *         {
+		 *           capability: "MESSAGING",
+		 *           capabilitySubtype:"IM",
+		 *           id:"org.webosports.messaging.aol.aim.aim",
+		 *           serviceName:"type_aim"
+		 *         }, .... more providers, but only one should be MESSAGING+IM
+		 *       ]
+		 *     }, ...more templates
+		 *   ]
+		 * }
+		 */
+		MojObject results;
+		payload.get(_T("results"), results);
+
+		MojObject accountTemplateItem;
+		MojObject::ConstArrayIterator accountTemplateItr = results.arrayBegin();
+		while(accountTemplateItr != results.arrayEnd())
+		{
+			accountTemplateItem = *accountTemplateItr;
+
+			MojObject capabilityProviders;
+			accountTemplateItem.get(_T("capabilityProviders"), capabilityProviders);
+
+			MojObject capabilityProviderItem;
+			MojObject::ConstArrayIterator capabilityProviderItr = capabilityProviders.arrayBegin();
+			while(capabilityProviderItr != capabilityProviders.arrayEnd())
+			{
+				capabilityProviderItem = *capabilityProviderItr;
+
+				bool found = false;
+				MojString capabilityType;
+				MojString capabilitySubType;
+				capabilityProviderItem.get(_T("capability"), capabilityType, found);
+				capabilityProviderItem.get(_T("capabilitySubtype"), capabilitySubType, found);
+
+				if(capabilityType == "MESSAGING" && capabilitySubType == "IM")
+				{
+					MojString capabilityId;
+					MojString serviceName;
+					capabilityProviderItem.getRequired(_T("serviceName"), serviceName);
+					capabilityProviderItem.getRequired(_T("id"), capabilityId);
+
+					m_serviceNameCapabilityMapping[serviceName] = capabilityId;
+				}
+
+				++capabilityProviderItr;
+			}
+
+			++accountTemplateItr;
+		}
+	}
+
 	return MojErrNone;
 }
-
 
 MojErr IMServiceHandler::onEnabled(MojServiceMessage* serviceMsg, const MojObject payload)
 {
@@ -352,7 +443,7 @@ bool IMServiceHandler::buddyInviteDeclined(const char* serviceName, const char* 
 MojErr IMServiceHandler::loginForTesting(MojServiceMessage* serviceMsg, const MojObject payload)
 {
 	if (m_loginState == NULL) {
-		m_loginState = new IMLoginState(m_service, this);
+		m_loginState = new IMLoginState(m_service, this, m_serviceNameCapabilityMapping);
 	}
 
 	m_loginState->loginForTesting(serviceMsg, payload);
@@ -369,7 +460,7 @@ MojErr IMServiceHandler::handleLoginStateChange(MojServiceMessage* serviceMsg, c
 	m_connectionState.initConnectionStatesFromActivity(payload);
 
 	if (m_loginState == NULL) {
-		m_loginState = new IMLoginState(m_service, this);
+		m_loginState = new IMLoginState(m_service, this, m_serviceNameCapabilityMapping);
 	}
 
 	return m_loginState->handleLoginStateChange(serviceMsg, payload);

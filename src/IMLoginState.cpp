@@ -37,10 +37,11 @@
 /*
  * IMLoginState
  */
-IMLoginState::IMLoginState(MojService* service, IMServiceApp::Listener* listener)
+IMLoginState::IMLoginState(MojService* service, IMServiceApp::Listener* listener, const std::map<MojString, MojString> &serviceNameCapabilityMapping)
 : m_loginStateRevision(0),
   m_signalHandler(NULL),
   m_service(service),
+  m_serviceNameCapabilityMapping(serviceNameCapabilityMapping),
   m_retryCount(0)
 {
 	// Register for login callbacks
@@ -56,6 +57,16 @@ IMLoginState::~IMLoginState()
 {
 	LibpurpleAdapter::assignIMLoginState(NULL);
 	ConnectionState::setLoginStateCallback(NULL);
+}
+
+bool IMLoginState::getCapabilityFromServiceName(const MojString& serviceName, MojString& capabilityId)
+{
+	bool found = (m_serviceNameCapabilityMapping.find(serviceName) != m_serviceNameCapabilityMapping.end());
+	if (found)
+	{
+		capabilityId = m_serviceNameCapabilityMapping[serviceName];
+	}
+	return found;
 }
 
 void IMLoginState::ProcessStarting()
@@ -486,7 +497,7 @@ MojErr IMLoginStateHandler::handleBadCredentials(const MojString& serviceName, c
 	bool found = m_loginStateController->getLoginStateData(service, user, state);
 	if (found) {
 		accountId = state.getAccountId();
-		MojRefCountedPtr<IMLoginSyncStateHandler> syncStateHandler(new IMLoginSyncStateHandler(m_service));
+		MojRefCountedPtr<IMLoginSyncStateHandler> syncStateHandler(new IMLoginSyncStateHandler(m_service, m_loginStateController));
 		syncStateHandler->updateSyncStateRecord(serviceName, accountId, LoginCallbackInterface::LOGIN_FAILED, err);
 	}
 	else {
@@ -1141,7 +1152,7 @@ void IMLoginStateHandler::loginResult(const char* serviceName, const char* usern
 	bool foundLoginState = m_loginStateController->getLoginStateData(service, user, loginState);
 	if (foundLoginState) {
 		accountId = loginState.getAccountId();
-		MojRefCountedPtr<IMLoginSyncStateHandler> syncStateHandler(new IMLoginSyncStateHandler(m_service));
+		MojRefCountedPtr<IMLoginSyncStateHandler> syncStateHandler(new IMLoginSyncStateHandler(m_service, m_loginStateController));
 		syncStateHandler->updateSyncStateRecord(serviceName, accountId, type, errorCodeMoj);
 	}
 	else {
@@ -1430,10 +1441,11 @@ MojErr IMLoginFailRetryHandler::activityCompleteResult(MojObject& result, MojErr
 /*
  * IMLoginSyncStateHandler -- signal handler to update syncState
  */
-IMLoginSyncStateHandler::IMLoginSyncStateHandler(MojService* service)
+IMLoginSyncStateHandler::IMLoginSyncStateHandler(MojService* service, IMLoginState *loginStateController)
 : m_removeSyncStateSlot(this, &IMLoginSyncStateHandler::removeSyncStateResult),
   m_saveSyncStateSlot(this, &IMLoginSyncStateHandler::saveSyncStateResult),
   m_service(service),
+  m_loginStateController(loginStateController),
   m_tempdbClient(service, MojDbServiceDefs::TempServiceName)
 {
 }
@@ -1461,13 +1473,10 @@ void IMLoginSyncStateHandler::updateSyncStateRecord(const char* serviceName, Moj
 
 	// get the capabilityProvidor id from the service
 	// TODO - should read this out of template ID...
-	if (strcmp(serviceName, SERVICENAME_GTALK) == 0) {
-		m_capabilityId.assign(CAPABILITY_GTALK);
-	}
-	else if (strcmp(serviceName, SERVICENAME_AIM) == 0){
-		m_capabilityId.assign(CAPABILITY_AIM);
-	}
-	else {
+	MojString mojServiceName;
+	mojServiceName.assign(serviceName);
+	if(!m_loginStateController->getCapabilityFromServiceName(mojServiceName, m_capabilityId))
+	{
 		MojLogError(IMServiceApp::s_log, _T("updateSyncStateRecord: unknown serviceName %s. No syncState record created."), serviceName);
 		// can we do anything here??
 		return;

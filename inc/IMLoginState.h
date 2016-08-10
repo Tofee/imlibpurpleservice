@@ -97,7 +97,7 @@ public:
  */
 class IMLoginState : public LoginCallbackInterface {
 public:
-	IMLoginState(MojService* service, IMServiceApp::Listener* listener);
+	IMLoginState(MojService* service, IMServiceApp::Listener* listener, const std::map<MojString, MojString> &serviceNameCapabilityMapping);
 	~IMLoginState();
 
 	void loginForTesting(MojServiceMessage* serviceMsg, const MojObject payload);
@@ -115,6 +115,8 @@ public:
 	bool getLoginStateData(const MojString& key, LoginStateData& state);
 	bool getLoginStateData(const MojString& serviceName, const MojString& username, LoginStateData& state);
 	void putLoginStateData(const MojString& key, LoginStateData& state);
+
+	bool getCapabilityFromServiceName(const MojString& serviceName, MojString& capabilityId);
 
 	void setLoginStateRevision(const MojInt64 revision) { m_loginStateRevision = revision; }
 
@@ -138,6 +140,8 @@ private:
 
 	// listener to tell when we are ready to shutdown
 	IMServiceApp::Listener* m_listener;
+
+	std::map<MojString, MojString> m_serviceNameCapabilityMapping;
 
 	// login retry count for network errors
 	MojUInt32 m_retryCount;
@@ -271,7 +275,7 @@ private:
 class IMLoginSyncStateHandler : public MojSignalHandler {
 
 public:
-	IMLoginSyncStateHandler(MojService* service);
+	IMLoginSyncStateHandler(MojService* service, IMLoginState* loginStateController);
 	void updateSyncStateRecord(const char* serviceName, MojString accountId, LoginCallbackInterface::LoginResult type, const char* errCode);
 
 
@@ -284,6 +288,8 @@ private:
 
 	MojService*	m_service;
 	MojDbServiceClient m_tempdbClient;
+
+	IMLoginState* m_loginStateController;
 
 	MojString m_accountId;
 	MojString m_capabilityId;
